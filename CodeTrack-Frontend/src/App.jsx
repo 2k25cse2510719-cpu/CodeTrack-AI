@@ -139,7 +139,7 @@ useEffect(() => {
 
 const toFrontend = (p) => ({
   ...p,
-  date: p.solvedDate ?? '',
+  date: p.solvedDate ?? p.createdAt?.slice(0, 10) ?? '',
   status: ({
     SOLVED: 'Solved',
     IN_PROGRESS: 'Attempted',
@@ -162,18 +162,29 @@ const toBackend = (p) => ({
   })[p.status] ?? 'TODO'
 });
 
+
 const week = useMemo(() => {
   const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const start = new Date(today);
   start.setDate(today.getDate() - 6);
-  start.setHours(0, 0, 0, 0);
+
+  // Format dates using local calendar time, not UTC.
+  const formatLocalDate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  };
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const date = new Date(start);
     date.setDate(start.getDate() + i);
 
     return {
-      date: date.toISOString().slice(0, 10),
+      date: formatLocalDate(date),
       day: date.toLocaleDateString('en-US', {
         weekday: 'short'
       }),
@@ -190,6 +201,7 @@ const week = useMemo(() => {
 
   return days;
 }, [problems]);
+
 
 const topics = useMemo(() => {
   const counts = {};
