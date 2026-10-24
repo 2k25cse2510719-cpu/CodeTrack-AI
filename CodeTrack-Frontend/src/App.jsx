@@ -55,8 +55,12 @@ const weeklyProgress = Math.min(
   100,
   Math.round((weeklySolved / weeklyGoal) * 100)
 );
-const API = 'http://localhost:8081/api/v1/problems';
-const AUTH_API = 'http://localhost:8081/api/v1/auth';
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081'
+).replace(/\/+$/, '');
+
+const API = `${API_BASE_URL}/api/v1/problems`;
+const AUTH_API = `${API_BASE_URL}/api/v1/auth`;
 const authHeaders = (extra = {}) => ({ ...extra, Authorization: `Bearer ${token}` });
 
 const logout = () => {
@@ -65,6 +69,20 @@ const logout = () => {
   setCurrentUser(null);
   setProblems([]);
   setPage('Overview');
+  setProfileOpen(false);
+  setModal(false);
+  setLoadError('');
+};
+
+// Automatically end the session when the backend says the token is invalid/expired.
+// A 403 is not handled globally because it can mean a valid user lacks permission.
+const apiFetch = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    logout();
+    setAuthError('Your session has expired. Please log in again.');
+  }
+  return response;
 };
 
 const handleAuth = async (e) => {
@@ -112,11 +130,14 @@ useEffect(() => {
     setLoadError('');
     try {
       const [meResponse, problemsResponse] = await Promise.all([
-        fetch(`${AUTH_API}/me`, { headers: authHeaders() }),
-        fetch(API, { headers: authHeaders() })
+        apiFetch(`${AUTH_API}/me`, { headers: authHeaders() }),
+        apiFetch(API, { headers: authHeaders() })
       ]);
-      if (meResponse.status === 401 || meResponse.status === 403 || problemsResponse.status === 401 || problemsResponse.status === 403) {
+      // /auth/me being forbidden means this session cannot be authenticated.
+      // Do not treat a problems endpoint 403 as an expired session: it may be an ownership denial.
+      if (meResponse.status === 401 || meResponse.status === 403 || problemsResponse.status === 401) {
         logout();
+        setAuthError('Your session is no longer valid. Please log in again.');
         return;
       }
       if (!meResponse.ok) throw new Error('Could not load your account.');
@@ -257,7 +278,7 @@ const submit = async (e) => {
   setSaving(true);
 
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       edit ? `${API}/${edit}` : API,
       {
         method: edit ? 'PUT' : 'POST',
@@ -292,7 +313,7 @@ const remove = async (id) => {
   if (!confirm('Delete this problem?')) return;
 
   try {
-    const response = await fetch(`${API}/${id}`, {
+    const response = await apiFetch(`${API}/${id}`, {
       method: 'DELETE',
       headers: authHeaders()
     });
@@ -312,7 +333,7 @@ const setProblemStatus = async (id, newStatus) => {
   if (!problem) return;
 
   try {
-    const response = await fetch(`${API}/${id}`, {
+    const response = await apiFetch(`${API}/${id}`, {
       method: 'PUT',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(toBackend({ ...problem, status: newStatus }))

@@ -2,6 +2,7 @@
 package com.codetrack.config;
 
 import com.codetrack.auth.JwtAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -10,6 +11,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -35,6 +38,20 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http) throws Exception {
 
+        AuthenticationEntryPoint authenticationEntryPoint =
+                (request, response, authException) ->
+                        response.sendError(
+                                HttpServletResponse.SC_UNAUTHORIZED,
+                                "Unauthorized"
+                        );
+
+        AccessDeniedHandler accessDeniedHandler =
+                (request, response, accessDeniedException) ->
+                        response.sendError(
+                                HttpServletResponse.SC_FORBIDDEN,
+                                "Forbidden"
+                        );
+
         http
             .csrf(csrf -> csrf.disable())
             .cors(Customizer.withDefaults())
@@ -42,13 +59,17 @@ public class SecurityConfig {
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .formLogin(form -> form.disable())
             .httpBasic(basic -> basic.disable())
+            .exceptionHandling(exception -> exception
+                .authenticationEntryPoint(authenticationEntryPoint)
+                .accessDeniedHandler(accessDeniedHandler)
+            )
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/v1/auth/me").authenticated()
-                .requestMatchers("/api/v1/auth/**", "/api/health").permitAll()
-                // Temporary: keep existing problem CRUD working.
-                // We'll protect these after associating problems with users.
-                .requestMatchers("/api/v1/problems/**").authenticated()
-                .anyRequest().authenticated()
+                .requestMatchers("/api/v1/auth/**", "/api/health")
+                    .permitAll()
+                .requestMatchers("/api/v1/problems/**")
+                    .authenticated()
+                .anyRequest()
+                    .authenticated()
             )
             .addFilterBefore(
                 jwtAuthenticationFilter,

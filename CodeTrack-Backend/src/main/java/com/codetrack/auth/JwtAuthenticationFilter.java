@@ -33,31 +33,57 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String header = request.getHeader("Authorization");
 
-        if (header != null && header.startsWith("Bearer ")) {
-            String token = header.substring(7);
+        if (header == null || !header.startsWith("Bearer ")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
-            try {
-                Claims claims = jwtService.extractClaims(token);
-                String email = claims.getSubject();
+        String token = header.substring(7).trim();
 
-                if (email != null
-                        && SecurityContextHolder.getContext()
-                                .getAuthentication() == null) {
+        if (token.isEmpty()) {
+            SecurityContextHolder.clearContext();
+            response.sendError(
+                    HttpServletResponse.SC_UNAUTHORIZED,
+                    "Invalid or expired token"
+            );
+            return;
+        }
 
-                    UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(
-                                    email, null, List.of());
+        try {
+            Claims claims = jwtService.extractClaims(token);
+            String email = claims.getSubject();
 
-                    authentication.setDetails(
-                            new WebAuthenticationDetailsSource()
-                                    .buildDetails(request));
-
-                    SecurityContextHolder.getContext()
-                            .setAuthentication(authentication);
-                }
-            } catch (Exception exception) {
+            if (email == null || email.isBlank()) {
                 SecurityContextHolder.clearContext();
+                response.sendError(
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "Invalid or expired token"
+                );
+                return;
             }
+
+            if (SecurityContextHolder.getContext()
+                    .getAuthentication() == null) {
+
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(
+                                email, null, List.of());
+
+                authentication.setDetails(
+                        new WebAuthenticationDetailsSource()
+                                .buildDetails(request));
+
+                SecurityContextHolder.getContext()
+                        .setAuthentication(authentication);
+            }
+
+        } catch (Exception exception) {
+            SecurityContextHolder.clearContext();
+            response.sendError(
+                    HttpServletResponse.SC_UNAUTHORIZED,
+                    "Invalid or expired token"
+            );
+            return;
         }
 
         filterChain.doFilter(request, response);

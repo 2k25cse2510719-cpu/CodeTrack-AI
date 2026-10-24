@@ -19,31 +19,37 @@ public class ProblemController {
     }
 
     @GetMapping
-    public List<Problem> getAll(Authentication authentication) {
-        return service.getAll(authentication.getName());
+    public List<ProblemResponse> getAll(Authentication authentication) {
+        return service.getAll(authentication.getName())
+                .stream()
+                .map(ProblemResponse::from)
+                .toList();
     }
 
     @GetMapping("/{id}")
-    public Problem getOne(
+    public ProblemResponse getOne(
             @PathVariable Long id,
             Authentication authentication) {
-        return service.getById(id, authentication.getName());
+        return ProblemResponse.from(
+                service.getById(id, authentication.getName()));
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Problem create(
+    public ProblemResponse create(
             @Valid @RequestBody ProblemRequest request,
             Authentication authentication) {
-        return service.create(request, authentication.getName());
+        return ProblemResponse.from(
+                service.create(request, authentication.getName()));
     }
 
     @PutMapping("/{id}")
-    public Problem update(
+    public ProblemResponse update(
             @PathVariable Long id,
             @Valid @RequestBody ProblemRequest request,
             Authentication authentication) {
-        return service.update(id, request, authentication.getName());
+        return ProblemResponse.from(
+                service.update(id, request, authentication.getName()));
     }
 
     @DeleteMapping("/{id}")
