@@ -28,6 +28,12 @@ public class Problem {
     @Column(length = 100)
     private String topic;
 
+    @Column(length = 100)
+    private String selectedPattern;
+
+    @Column(length = 100)
+    private String verifiedPattern;
+
     @Column(length = 2048)
     private String url;
 
@@ -46,9 +52,9 @@ public class Problem {
     private LocalDateTime updatedAt;
 
     @JsonIgnore
-@ManyToOne(fetch = FetchType.LAZY, optional = false)
-@JoinColumn(name = "user_id", nullable = false)
-private User user;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
     public Problem() {}
 
@@ -81,6 +87,16 @@ private User user;
 
     public String getTopic() { return topic; }
     public void setTopic(String topic) { this.topic = topic; }
+
+    public String getSelectedPattern() { return selectedPattern; }
+    public void setSelectedPattern(String selectedPattern) {
+        this.selectedPattern = selectedPattern;
+    }
+
+    public String getVerifiedPattern() { return verifiedPattern; }
+    public void setVerifiedPattern(String verifiedPattern) {
+        this.verifiedPattern = verifiedPattern;
+    }
 
     public String getUrl() { return url; }
     public void setUrl(String url) { this.url = url; }

@@ -1,4 +1,3 @@
-
 package com.codetrack.problem;
 
 import com.codetrack.auth.User;
@@ -70,6 +69,11 @@ public class ProblemService {
         problem.setPlatform(request.platform());
         problem.setDifficulty(request.difficulty());
         problem.setTopic(request.topic());
+        problem.setSelectedPattern(request.selectedPattern());
+
+        // verifiedPattern is intentionally not writable through the regular user API.
+        // A trusted curation/admin workflow can populate it separately.
+
         problem.setUrl(request.url());
         problem.setStatus(
                 request.status() == null

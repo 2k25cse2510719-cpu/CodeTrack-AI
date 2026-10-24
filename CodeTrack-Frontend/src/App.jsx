@@ -3,22 +3,47 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, ArrowUpRight, BarChart3, Bell, BookOpen, Check, CheckCircle2, ChevronDown, Code2, Filter, Flame, LayoutDashboard, ListChecks, Menu, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Target, Trophy, Trash2, X, CalendarDays, Clock3, ExternalLink, CircleDashed } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, BarChart as RBarChart, Bar } from 'recharts';
 
-const starter=[
-{id:1,title:'Two Sum',platform:'LeetCode',topic:'Arrays & Hashing',difficulty:'Easy',status:'Solved',date:'2026-10-21',url:'https://leetcode.com/problems/two-sum/',notes:'Use a map to store the value and its index.'},
-{id:2,title:'Longest Substring Without Repeating Characters',platform:'LeetCode',topic:'Sliding Window',difficulty:'Medium',status:'Revision',date:'2026-10-20',url:'https://leetcode.com/problems/longest-substring-without-repeating-characters/',notes:'Revise the window boundaries and last-seen index.'},
-{id:3,title:'Valid Parentheses',platform:'LeetCode',topic:'Stack',difficulty:'Easy',status:'Solved',date:'2026-10-19',url:'https://leetcode.com/problems/valid-parentheses/',notes:'Stack works well for matching pairs.'},
-{id:4,title:'Merge Two Sorted Lists',platform:'LeetCode',topic:'Linked List',difficulty:'Easy',status:'Attempted',date:'2026-10-18',url:'https://leetcode.com/problems/merge-two-sorted-lists/',notes:''},
-{id:5,title:'Product of Array Except Self',platform:'LeetCode',topic:'Arrays & Hashing',difficulty:'Medium',status:'Solved',date:'2026-10-17',url:'https://leetcode.com/problems/product-of-array-except-self/',notes:'Prefix and suffix products; no division.'},
-{id:6,title:'Binary Tree Level Order Traversal',platform:'LeetCode',topic:'Trees',difficulty:'Medium',status:'Revision',date:'2026-10-16',url:'https://leetcode.com/problems/binary-tree-level-order-traversal/',notes:'Use a queue for BFS level traversal.'}];
+const blank=()=>({title:'',platform:'LeetCode',topic:'Arrays & Hashing',selectedPattern:'',verifiedPattern:null,difficulty:'Medium',status:'Solved',date:new Date().toISOString().slice(0,10),url:'',notes:''});
 
+// Prevent requests from leaving the interface stuck forever when a hosted service is asleep or unreachable.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('The server took too long to respond. Please try again.');
+    }
+    if (error instanceof TypeError) {
+      throw new Error('Could not reach the server. Check your connection and try again.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
-const blank=()=>({title:'',platform:'LeetCode',topic:'Arrays & Hashing',difficulty:'Medium',status:'Solved',date:new Date().toISOString().slice(0,10),url:'',notes:''});
+async function responseError(response, fallback) {
+  const raw = await response.text().catch(() => '');
+  if (!raw) return `${fallback} (HTTP ${response.status}).`;
+  try {
+    const data = JSON.parse(raw);
+    return data.message || data.error || data.detail || `${fallback} (HTTP ${response.status}).`;
+  } catch {
+    // Avoid dumping HTML/proxy error pages into a user-facing message.
+    return raw.length < 220 && !raw.trimStart().startsWith('<')
+      ? raw
+      : `${fallback} (HTTP ${response.status}).`;
+  }
+}
 function Stat({label,value,sub,icon:Icon,tone}){return <div className="stat"><div className={'stat-icon '+tone}><Icon size={18}/></div><div><span>{label}</span><strong>{value}</strong><small>{sub}</small></div></div>}
 function Modal({title,onClose,children}){return <div className="backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon" onClick={onClose}><X size={18}/></button></div>{children}</section></div>}
 export default function App(){
 const[page,setPage]=useState('Overview'),[workspaceOpen,setWorkspaceOpen]=useState(false),[profileOpen,setProfileOpen]=useState(false),[compactMode,setCompactMode]=useState(false),[showNotifications,setShowNotifications]=useState(true),[problems,setProblems]=useState([]),[query,setQuery]=useState(''),[status,setStatus]=useState('All statuses'),[difficulty,setDifficulty]=useState('All difficulties'),[modal,setModal]=useState(false),[edit,setEdit]=useState(null),[form,setForm]=useState(blank()),[mobile,setMobile]=useState(false),[toast,setToast]=useState('');
 const [loading, setLoading] = useState(true);
 const [loadError, setLoadError] = useState('');
+const [loadAttempt, setLoadAttempt] = useState(0);
 const [saving, setSaving] = useState(false);
 const [token, setToken] = useState(() => localStorage.getItem('codetrack_token') || '');
 const [currentUser, setCurrentUser] = useState(null);
@@ -31,8 +56,13 @@ const [authError, setAuthError] = useState('');
 const notify = (t) => {
   if (!showNotifications) return;
   setToast(t);
-  setTimeout(() => setToast(''), 2400);
 };
+
+useEffect(() => {
+  if (!toast) return undefined;
+  const timeoutId = setTimeout(() => setToast(''), 2800);
+  return () => clearTimeout(timeoutId);
+}, [toast]);
 
 const solved = problems.filter(p => p.status === 'Solved').length;
 const revision = problems.filter(p => p.status === 'Revision').length;
@@ -77,7 +107,7 @@ const logout = () => {
 // Automatically end the session when the backend says the token is invalid/expired.
 // A 403 is not handled globally because it can mean a valid user lacks permission.
 const apiFetch = async (url, options = {}) => {
-  const response = await fetch(url, options);
+  const response = await fetchWithTimeout(url, options);
   if (response.status === 401) {
     logout();
     setAuthError('Your session has expired. Please log in again.');
@@ -91,7 +121,7 @@ const handleAuth = async (e) => {
   setAuthError('');
   try {
     const isRegister = authMode === 'register';
-    const response = await fetch(`${AUTH_API}/${isRegister ? 'register' : 'login'}`, {
+    const response = await fetchWithTimeout(`${AUTH_API}/${isRegister ? 'register' : 'login'}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(isRegister
@@ -106,12 +136,13 @@ const handleAuth = async (e) => {
       setAuthError('Account created. Please log in.');
       return;
     }
+    if (!data.token) throw new Error('The server response did not include a login token. Please try again.');
     localStorage.setItem('codetrack_token', data.token);
     setToken(data.token);
     setCurrentUser({ id: data.id, name: data.name, email: data.email });
     setAuthPassword('');
   } catch (err) {
-    setAuthError(err.message || 'Could not connect to the backend.');
+    setAuthError(err.message || 'Could not connect to the backend. Please try again.');
   } finally {
     setAuthBusy(false);
   }
@@ -121,6 +152,7 @@ useEffect(() => {
   if (!token) {
     setCurrentUser(null);
     setProblems([]);
+    setLoadError('');
     setLoading(false);
     return;
   }
@@ -130,18 +162,20 @@ useEffect(() => {
     setLoadError('');
     try {
       const [meResponse, problemsResponse] = await Promise.all([
-        apiFetch(`${AUTH_API}/me`, { headers: authHeaders() }),
-        apiFetch(API, { headers: authHeaders() })
+        fetchWithTimeout(`${AUTH_API}/me`, { headers: authHeaders() }),
+        fetchWithTimeout(API, { headers: authHeaders() })
       ]);
       // /auth/me being forbidden means this session cannot be authenticated.
       // Do not treat a problems endpoint 403 as an expired session: it may be an ownership denial.
       if (meResponse.status === 401 || meResponse.status === 403 || problemsResponse.status === 401) {
-        logout();
-        setAuthError('Your session is no longer valid. Please log in again.');
+        if (!cancelled) {
+          logout();
+          setAuthError('Your session is no longer valid. Please log in again.');
+        }
         return;
       }
-      if (!meResponse.ok) throw new Error('Could not load your account.');
-      if (!problemsResponse.ok) throw new Error(`Could not load problems (HTTP ${problemsResponse.status}).`);
+      if (!meResponse.ok) throw new Error(await responseError(meResponse, 'Could not load your account'));
+      if (!problemsResponse.ok) throw new Error(await responseError(problemsResponse, 'Could not load your problems'));
       const me = await meResponse.json();
       const data = await problemsResponse.json();
       if (!cancelled) {
@@ -156,7 +190,7 @@ useEffect(() => {
   };
   loadAccount();
   return () => { cancelled = true; };
-}, [token]);
+}, [token, loadAttempt]);
 
 const toFrontend = (p) => ({
   ...p,
@@ -172,7 +206,9 @@ const toBackend = (p) => ({
   title: p.title,
   platform: p.platform,
   topic: p.topic,
-  url:p.url,
+  selectedPattern: p.selectedPattern || null,
+  verifiedPattern: p.verifiedPattern || null,
+  url: p.url,
   difficulty: p.difficulty,
   solvedDate: p.date || null,
   notes: p.notes,
@@ -237,7 +273,18 @@ const topics = useMemo(() => {
     .sort((a, b) => b.count - a.count);
 }, [problems]);
 
-const filtered=useMemo(()=>problems.filter(p=>(p.title+' '+p.topic+' '+p.platform).toLowerCase().includes(query.toLowerCase())&&(status==='All statuses'||p.status===status)&&(difficulty==='All difficulties'||p.difficulty===difficulty)),[problems,query,status,difficulty]);
+const patterns = useMemo(() => {
+  const counts = {};
+  problems.forEach((problem) => {
+    const pattern = problem.selectedPattern?.trim();
+    if (pattern) counts[pattern] = (counts[pattern] || 0) + 1;
+  });
+  return Object.entries(counts)
+    .map(([pattern, count]) => ({ pattern, count }))
+    .sort((a, b) => b.count - a.count);
+}, [problems]);
+
+const filtered=useMemo(()=>problems.filter(p=>(p.title+' '+p.topic+' '+p.platform+' '+(p.selectedPattern||'')).toLowerCase().includes(query.toLowerCase())&&(status==='All statuses'||p.status===status)&&(difficulty==='All difficulties'||p.difficulty===difficulty)),[problems,query,status,difficulty]);
 
 const add = () => {
   setEdit(null);
@@ -288,10 +335,12 @@ const submit = async (e) => {
     );
 
     if (!response.ok) {
-      throw new Error(await response.text());
+      throw new Error(await responseError(response, 'Could not save the problem'));
     }
 
-    const savedProblem = toFrontend(await response.json());
+    const responseData = response.status === 204 ? null : await response.json().catch(() => null);
+    if (!responseData) throw new Error('The server saved no problem data in its response. Refresh and check your problem list before trying again.');
+    const savedProblem = toFrontend(responseData);
 
     setProblems((current) =>
       edit
@@ -303,7 +352,7 @@ const submit = async (e) => {
     notify(edit ? 'Problem updated in MySQL' : 'Problem saved to MySQL');
   } catch (error) {
     console.error('Saving failed:', error);
-    notify('Could not save. Check the browser console.');
+    notify(error.message || 'Could not save the problem. Please try again.');
   } finally {
     setSaving(false);
   }
@@ -318,13 +367,13 @@ const remove = async (id) => {
       headers: authHeaders()
     });
 
-    if (!response.ok) throw new Error('Delete failed');
+    if (!response.ok) throw new Error(await responseError(response, 'Could not delete the problem'));
 
     setProblems((current) => current.filter((p) => p.id !== id));
     notify('Problem deleted from MySQL');
   } catch (error) {
     console.error('Delete failed:', error);
-    notify('Could not delete the problem');
+    notify(error.message || 'Could not delete the problem. Please try again.');
   }
 };
 
@@ -339,9 +388,11 @@ const setProblemStatus = async (id, newStatus) => {
       body: JSON.stringify(toBackend({ ...problem, status: newStatus }))
     });
 
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) throw new Error(await responseError(response, 'Could not update the problem status'));
 
-    const updated = toFrontend(await response.json());
+    const responseData = await response.json().catch(() => null);
+    if (!responseData) throw new Error('The server returned no updated problem. Refresh the list and check the saved status.');
+    const updated = toFrontend(responseData);
 
     setProblems((current) =>
       current.map((p) => p.id === id ? updated : p)
@@ -350,7 +401,7 @@ const setProblemStatus = async (id, newStatus) => {
     notify('Status saved to MySQL');
   } catch (error) {
     console.error('Status update failed:', error);
-    notify('Could not update status');
+    notify(error.message || 'Could not update status. Please try again.');
   }
 };
 
@@ -384,7 +435,10 @@ return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><
 })}</div><button className="icon" onClick={()=>notify(`${revision} problem(s) marked for revision`)}><Bell size={18}/></button><div className="avatar top-avatar">{(currentUser?.name || 'U').charAt(0).toUpperCase()}</div></div></header><div className="content">
 
 {loading && (
-  <div className="empty">Loading your problems...</div>
+  <div className="empty">
+    <p>Loading your problems…</p>
+    <small>The server may take a moment to wake up. This request will time out instead of loading forever.</small>
+  </div>
 )}
 
 {!loading && loadError && (
@@ -392,9 +446,9 @@ return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><
     <p>{loadError}</p>
     <button
       className="primary"
-      onClick={() => window.location.reload()}
+      onClick={() => setLoadAttempt((attempt) => attempt + 1)}
     >
-      Try again
+      <RefreshCw size={15} /> Retry loading
     </button>
   </div>
 )}
@@ -405,7 +459,7 @@ return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><
 <small>Keep building your progress!</small></div></div><div className="float-check"><Check/></div></div></section><div className="stats"><Stat label="Problems solved" value={solved} sub="Across all topics" icon={CheckCircle2} tone="green"/><Stat label="Need revision" value={revision} sub="Keep concepts fresh" icon={RefreshCw} tone="purple"/><Stat label="Attempted" value={attempted} sub="Ready for another try" icon={CircleDashed} tone="orange"/><Stat label="Total tracked" value={problems.length} sub="Your coding journey" icon={Code2} tone="blue"/></div><div className="grid"><section className="panel"><div className="panel-head"><div><h3>Weekly activity</h3><p>Your practice, day by day</p></div><span className="pill-select">This week <ChevronDown size={13}/></span></div><div className="legend"><i/> Problems solved <small>Last 7 days</small></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={week} margin={{top:10,right:5,left:-22,bottom:0}}><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7667f5" stopOpacity={.24}/><stop offset="100%" stopColor="#7667f5" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#edf0f6" vertical={false}/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill:'#9299ad',fontSize:11}} dy={9}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#9299ad',fontSize:11}}/><Tooltip/><Area type="monotone" dataKey="solved" stroke="#7667f5" strokeWidth={2.5} fill="url(#fill)"/></AreaChart></ResponsiveContainer></div></section><section className="panel"><div className="panel-head"><div><h3>Topics in motion</h3><p>Where you've been practicing</p></div><button className="icon" onClick={()=>setPage('Analytics')}><ArrowUpRight/></button></div><div className="topic-list">{topics.map((t,i)=><div key={t.topic}><div className="topic-meta"><span>{t.topic}</span><b>{t.count}</b></div><div className="track"><i className={'color-'+i} style={{width:((t.count / Math.max(...topics.map(t => t.count), 1)) * 100)+'%'}}/></div></div>)}</div><button className="link" onClick={()=>setPage('Analytics')}>View topic analytics <ArrowUpRight size={14}/></button></section></div><section className="panel recent"><div className="panel-head"><div><h3>Recently tracked</h3><p>Your latest problem activity</p></div><button className="link" onClick={()=>setPage('Problem Tracker')}>View all <ArrowUpRight size={14}/></button></div><ProblemTable problems={problems.slice(0,4)} onEdit={editProblem} onDelete={remove} onStatus={setProblemStatus}/></section><div className="foot"><ShieldCheck size={15}/>Your progress is synced with the CodeTrack backend.</div></>}
 {page==='Problem Tracker'&&<><div className="page-title"><div><div className="eyebrow">YOUR PRACTICE LIBRARY</div><h1>Problem tracker</h1><p>Keep every attempt, insight, and revision in one place.</p></div><button className="primary" onClick={add}><Plus size={17}/> Add a problem</button></div><section className="panel tracker"><div className="toolbar"><div className="search"><Search size={16}/><input placeholder="Search problems, topics, platforms..." value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="filters"><div className="filter"><Filter size={14}/><select value={status} onChange={e=>setStatus(e.target.value)}><option>All statuses</option><option>Solved</option><option>Attempted</option><option>Revision</option></select></div><select className="select" value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>All difficulties</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div></div><ProblemTable problems={filtered} onEdit={editProblem} onDelete={remove} onStatus={setProblemStatus} empty="No matching problems. Change the filters or add a problem."/></section></>}
 {page==='Revision Notes'&&<><div className="page-title"><div><div className="eyebrow">REMEMBER WHAT YOU LEARN</div><h1>Revision notes</h1><p>Short reminders for concepts you want to revisit.</p></div><button className="primary" onClick={()=>{setStatus('Revision');setPage('Problem Tracker')}}><BookOpen size={16}/> See revision queue</button></div><div className="notes-grid">{problems.filter(p=>p.notes?.trim()).map(p=><article className="note" key={p.id}><div className="note-top"><span className={'difficulty '+p.difficulty.toLowerCase()}>{p.difficulty}</span><button className="icon" onClick={()=>editProblem(p)}><ExternalLink size={15}/></button></div><h3>{p.title}</h3><small>{p.topic} · {p.platform}</small><p>{p.notes}</p><div className="note-bottom"><span><Clock3 size={13}/> {p.date}</span><button onClick={()=>setProblemStatus(p.id,p.status==='Revision'?'Solved':'Revision')}>{p.status==='Revision'?'Mark revised':'Add to revision'} <ArrowUpRight size={13}/></button></div></article>)}</div>{!problems.some(p=>p.notes?.trim())&&<div className="empty">No revision notes yet. Add notes to a problem to keep key ideas handy.</div>}</>}
-{page==='Analytics'&&<><div className="page-title"><div><div className="eyebrow">MEASURE YOUR MOMENTUM</div><h1>Progress analytics</h1><p>Use the patterns to decide what to practice next.</p></div></div><div className="stats"><Stat label="Problems solved" value={solved} sub="Completed" icon={CheckCircle2} tone="green"/><Stat label="In revision" value={revision} sub="Reinforce concepts" icon={RefreshCw} tone="purple"/><Stat label="Attempted" value={attempted} sub="Continue practicing" icon={CircleDashed} tone="orange"/><Stat label="Total problems" value={problems.length} sub="All records" icon={Code2} tone="blue"/></div><div className="grid"><section className="panel"><div className="panel-head"><div><h3>Weekly solved problems</h3><p>Solved problems over the last 7 days</p></div></div><div className="chart tall"><ResponsiveContainer width="100%" height="100%"><RBarChart data={week}><CartesianGrid stroke="#edf0f6" vertical={false}/><XAxis dataKey="day" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip/><Bar dataKey="solved" fill="#7667f5" radius={[5,5,0,0]}/></RBarChart></ResponsiveContainer></div></section><section className="panel"><div className="panel-head"><div><h3>Topic coverage</h3><p>Problems grouped by topic</p></div></div><div className="topic-list">{topics.map((t,i)=><div key={t.topic}><div className="topic-meta"><span>{t.topic}</span><b>{t.count}</b></div><div className="track"><i className={'color-'+i} style={{width:((t.count / Math.max(...topics.map(t => t.count), 1)) * 100)+'%'}}/></div></div>)}</div></section></div></>}
+{page==='Analytics'&&<><div className="page-title"><div><div className="eyebrow">MEASURE YOUR MOMENTUM</div><h1>Progress analytics</h1><p>Use the patterns to decide what to practice next.</p></div></div><div className="stats"><Stat label="Problems solved" value={solved} sub="Completed" icon={CheckCircle2} tone="green"/><Stat label="In revision" value={revision} sub="Reinforce concepts" icon={RefreshCw} tone="purple"/><Stat label="Attempted" value={attempted} sub="Continue practicing" icon={CircleDashed} tone="orange"/><Stat label="Total problems" value={problems.length} sub="All records" icon={Code2} tone="blue"/></div><div className="grid"><section className="panel"><div className="panel-head"><div><h3>Weekly solved problems</h3><p>Solved problems over the last 7 days</p></div></div><div className="chart tall"><ResponsiveContainer width="100%" height="100%"><RBarChart data={week}><CartesianGrid stroke="#edf0f6" vertical={false}/><XAxis dataKey="day" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip/><Bar dataKey="solved" fill="#7667f5" radius={[5,5,0,0]}/></RBarChart></ResponsiveContainer></div></section><section className="panel"><div className="panel-head"><div><h3>Topic coverage</h3><p>Problems grouped by topic</p></div></div><div className="topic-list">{topics.map((t,i)=><div key={t.topic}><div className="topic-meta"><span>{t.topic}</span><b>{t.count}</b></div><div className="track"><i className={'color-'+i} style={{width:((t.count / Math.max(...topics.map(t => t.count), 1)) * 100)+'%'}}/></div></div>)}</div></section><section className="panel"><div className="panel-head"><div><h3>Pattern coverage</h3><p>Strategies you have tagged in your problem log</p></div></div>{patterns.length ? <div className="topic-list">{patterns.map((item,i)=><div key={item.pattern}><div className="topic-meta"><span>{item.pattern}</span><b>{item.count}</b></div><div className="track"><i className={'color-'+i} style={{width:((item.count / Math.max(...patterns.map(x=>x.count),1))*100)+'%'}}/></div></div>)}</div> : <p style={{color:'var(--muted)',fontSize:13}}>Add a DSA pattern to a problem to start building your pattern coverage.</p>}</section></div></>}
 {page==='Settings'&&<><div className="page-title"><div><div className="eyebrow">MAKE CODETRACK YOURS</div><h1>Settings</h1><p>Manage your CodeTrack preferences and data.</p></div></div><section className="panel" style={{maxWidth:760,padding:24}}><div className="panel-head"><div><h3>Appearance</h3><p>Choose how the workspace behaves on this device.</p></div></div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:20,padding:'18px 0',borderBottom:'1px solid #edf0f6'}}><div><b style={{display:'block',fontSize:14}}>Compact layout</b><small style={{color:'#9299ad'}}>Reduce spacing in lists and panels.</small></div><input aria-label="Compact layout" type="checkbox" checked={compactMode} onChange={e=>{setCompactMode(e.target.checked);document.body.classList.toggle('compact-mode',e.target.checked);notify(e.target.checked?'Compact layout enabled':'Compact layout disabled')}}/></div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:20,padding:'18px 0',borderBottom:'1px solid #edf0f6'}}><div><b style={{display:'block',fontSize:14}}>In-app notifications</b><small style={{color:'#9299ad'}}>Show feedback messages after actions.</small></div><input aria-label="In-app notifications" type="checkbox" checked={showNotifications} onChange={e=>setShowNotifications(e.target.checked)}/></div><div style={{paddingTop:20}}><h3 style={{marginBottom:6}}>Local data</h3><p style={{ color: 'var(--muted)', lineHeight: 1.7 }}>
   Your problem records are stored in the CodeTrack backend and synced with your MySQL database.
 </p></div></section></>}
@@ -419,9 +473,9 @@ return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><
 </div><p className="hint">This is a visual demo goal. Goal editing can be added later.</p></section></>}
 </>
 )}
-</div></main>{modal&&<Modal title={edit?'Edit problem':'Add a problem'} onClose={()=>setModal(false)}><form className="form" onSubmit={submit}><label>Problem title *<input autoFocus required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="e.g. Two Sum"/></label><div className="form-row"><label>Platform<select value={form.platform} onChange={e=>setForm({...form,platform:e.target.value})}><option>LeetCode</option><option>GeeksforGeeks</option><option>Codeforces</option><option>HackerRank</option><option>Other</option></select></label><label>Topic<select value={form.topic} onChange={e=>setForm({...form,topic:e.target.value})}><option>Arrays & Hashing</option><option>Strings</option><option>Two Pointers</option><option>Sliding Window</option><option>Linked List</option><option>Stack</option><option>Queue</option><option>Binary Search</option><option>Trees</option><option>Heap</option><option>Graphs</option><option>Dynamic Programming</option><option>Greedy</option><option>Backtracking</option><option>Other</option></select></label></div><div className="form-row"><label>Difficulty<select value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})}><option>Easy</option><option>Medium</option><option>Hard</option></select></label><label>Status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option>Solved</option><option>Attempted</option><option>Revision</option></select></label></div><div className="form-row"><label>Date practiced<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Problem URL<input type="url" value={form.url} onChange={e=>setForm({...form,url:e.target.value})} placeholder="https://..."/></label></div><label>Revision notes<textarea rows="3" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="Key idea, mistake to avoid, or what to revise..."/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setModal(false)}>Cancel</button><button type="submit" className="primary" disabled={saving}>
+</div></main>{modal&&<Modal title={edit?'Edit problem':'Add a problem'} onClose={()=>setModal(false)}><form className="form" onSubmit={submit}><label>Problem title *<input autoFocus required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="e.g. Two Sum"/></label><div className="form-row"><label>Platform<select value={form.platform} onChange={e=>setForm({...form,platform:e.target.value})}><option>LeetCode</option><option>GeeksforGeeks</option><option>Codeforces</option><option>HackerRank</option><option>Other</option></select></label><label>Topic<select value={form.topic} onChange={e=>setForm({...form,topic:e.target.value})}><option>Arrays & Hashing</option><option>Strings</option><option>Two Pointers</option><option>Sliding Window</option><option>Linked List</option><option>Stack</option><option>Queue</option><option>Binary Search</option><option>Trees</option><option>Heap</option><option>Graphs</option><option>Dynamic Programming</option><option>Greedy</option><option>Backtracking</option><option>Other</option></select></label></div><div className="form-row"><label>DSA pattern<select value={form.selectedPattern || ''} onChange={e=>setForm({...form,selectedPattern:e.target.value})}><option value="">Select a pattern (optional)</option><option>Hashing</option><option>Two Pointers</option><option>Sliding Window</option><option>Prefix Sum</option><option>Binary Search</option><option>Fast &amp; Slow Pointers</option><option>Linked List Reversal</option><option>Stack</option><option>Monotonic Stack</option><option>Queue</option><option>Heap / Top K</option><option>Intervals</option><option>Greedy</option><option>Backtracking</option><option>Tree DFS</option><option>Tree BFS</option><option>Graph DFS</option><option>Graph BFS</option><option>Union Find</option><option>Topological Sort</option><option>Dynamic Programming</option><option>Bit Manipulation</option><option>Trie</option><option>Matrix Traversal</option><option>Other</option></select><small style={{display:'block',marginTop:5,color:'var(--muted)'}}>Choose the strategy you think applies. This is your selection, not a verified label.</small></label></div><div className="form-row"><label>Difficulty<select value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})}><option>Easy</option><option>Medium</option><option>Hard</option></select></label><label>Status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option>Solved</option><option>Attempted</option><option>Revision</option></select></label></div><div className="form-row"><label>Date practiced<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Problem URL<input type="url" value={form.url} onChange={e=>setForm({...form,url:e.target.value})} placeholder="https://..."/></label></div><label>Revision notes<textarea rows="3" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="Key idea, mistake to avoid, or what to revise..."/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setModal(false)}>Cancel</button><button type="submit" className="primary" disabled={saving}>
   <Check size={16}/>
   {saving ? 'Saving...' : edit ? 'Save changes' : 'Add problem'}
 </button></div></form></Modal>}{profileOpen&&<Modal title="Your profile" onClose={()=>setProfileOpen(false)}><div style={{display:'flex',alignItems:'center',gap:14,padding:'8px 0 20px'}}><div className="avatar" style={{width:52,height:52,fontSize:20}}>Y</div><div><h3 style={{margin:'0 0 4px'}}>{currentUser?.name || 'CodeTrack account'}</h3><p style={{margin:0,color:'#9299ad',fontSize:13}}>{currentUser?.email}</p></div></div><div style={{background:'#f8f8fc',borderRadius:10,padding:14,marginBottom:18}}><b style={{fontSize:13}}>Profile status</b><p style={{margin:'6px 0 0',fontSize:13,color:'#9299ad'}}>Your problem records are stored in the CodeTrack backend.</p></div><div className="form-actions"><button className="secondary" onClick={()=>{setProfileOpen(false);setPage('Settings')}}><Settings size={15}/> Settings</button><button className="secondary" onClick={()=>{setProfileOpen(false);logout()}}>Log out</button><button className="primary" onClick={()=>setProfileOpen(false)}>Done</button></div></Modal>}{toast&&<div className="toast"><CheckCircle2 size={17}/>{toast}</div>}</div>
 }
-function ProblemTable({problems,onEdit,onDelete,onStatus,empty='No problems yet.'}){if(!problems.length)return <div className="table-empty"><Search size={22}/><p>{empty}</p></div>;return <div className="table-wrap"><table><thead><tr><th>PROBLEM</th><th>TOPIC</th><th>DIFFICULTY</th><th>STATUS</th><th>DATE</th><th/></tr></thead><tbody>{problems.map(p=><tr key={p.id}><td><div className="problem"><span className="problem-icon"><Code2 size={15}/></span><div><b>{p.title}</b><small>{p.platform}{p.url&&<> · <a href={p.url} target="_blank" rel="noreferrer">Open problem ↗</a></>}</small></div></div></td><td><span className="topic-pill">{p.topic}</span></td><td><span className={'difficulty '+p.difficulty.toLowerCase()}>{p.difficulty}</span></td><td><select className={'status '+p.status.toLowerCase()} value={p.status} onChange={e=>onStatus(p.id,e.target.value)}><option>Solved</option><option>Attempted</option><option>Revision</option></select></td><td className="date">{p.date}</td><td><div className="row-actions"><button title="Edit" onClick={()=>onEdit(p)}><Settings size={15}/></button><button title="Delete" onClick={()=>onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>}
+function ProblemTable({problems,onEdit,onDelete,onStatus,empty='No problems yet.'}){if(!problems.length)return <div className="table-empty"><Search size={22}/><p>{empty}</p></div>;return <div className="table-wrap"><table><thead><tr><th>PROBLEM</th><th>TOPIC</th><th>DSA PATTERN</th><th>DIFFICULTY</th><th>STATUS</th><th>DATE</th><th/></tr></thead><tbody>{problems.map(p=><tr key={p.id}><td><div className="problem"><span className="problem-icon"><Code2 size={15}/></span><div><b>{p.title}</b><small>{p.platform}{p.url&&<> · <a href={p.url} target="_blank" rel="noreferrer">Open problem ↗</a></>}</small></div></div></td><td><span className="topic-pill">{p.topic}</span></td><td><span className="topic-pill">{p.selectedPattern || '—'}</span></td><td><span className={'difficulty '+p.difficulty.toLowerCase()}>{p.difficulty}</span></td><td><select className={'status '+p.status.toLowerCase()} value={p.status} onChange={e=>onStatus(p.id,e.target.value)}><option>Solved</option><option>Attempted</option><option>Revision</option></select></td><td className="date">{p.date}</td><td><div className="row-actions"><button title="Edit" onClick={()=>onEdit(p)}><Settings size={15}/></button><button title="Delete" onClick={()=>onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>}
