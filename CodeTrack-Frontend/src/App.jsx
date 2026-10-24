@@ -20,6 +20,14 @@ const[page,setPage]=useState('Overview'),[workspaceOpen,setWorkspaceOpen]=useSta
 const [loading, setLoading] = useState(true);
 const [loadError, setLoadError] = useState('');
 const [saving, setSaving] = useState(false);
+const [token, setToken] = useState(() => localStorage.getItem('codetrack_token') || '');
+const [currentUser, setCurrentUser] = useState(null);
+const [authMode, setAuthMode] = useState('login');
+const [authName, setAuthName] = useState('');
+const [authEmail, setAuthEmail] = useState('');
+const [authPassword, setAuthPassword] = useState('');
+const [authBusy, setAuthBusy] = useState(false);
+const [authError, setAuthError] = useState('');
 const notify = (t) => {
   if (!showNotifications) return;
   setToast(t);
@@ -48,6 +56,86 @@ const weeklyProgress = Math.min(
   Math.round((weeklySolved / weeklyGoal) * 100)
 );
 const API = 'http://localhost:8081/api/v1/problems';
+const AUTH_API = 'http://localhost:8081/api/v1/auth';
+const authHeaders = (extra = {}) => ({ ...extra, Authorization: `Bearer ${token}` });
+
+const logout = () => {
+  localStorage.removeItem('codetrack_token');
+  setToken('');
+  setCurrentUser(null);
+  setProblems([]);
+  setPage('Overview');
+};
+
+const handleAuth = async (e) => {
+  e.preventDefault();
+  setAuthBusy(true);
+  setAuthError('');
+  try {
+    const isRegister = authMode === 'register';
+    const response = await fetch(`${AUTH_API}/${isRegister ? 'register' : 'login'}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(isRegister
+        ? { name: authName.trim(), email: authEmail.trim(), password: authPassword }
+        : { email: authEmail.trim(), password: authPassword })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || (isRegister ? 'Registration failed.' : 'Invalid email or password.'));
+    if (isRegister) {
+      setAuthMode('login');
+      setAuthPassword('');
+      setAuthError('Account created. Please log in.');
+      return;
+    }
+    localStorage.setItem('codetrack_token', data.token);
+    setToken(data.token);
+    setCurrentUser({ id: data.id, name: data.name, email: data.email });
+    setAuthPassword('');
+  } catch (err) {
+    setAuthError(err.message || 'Could not connect to the backend.');
+  } finally {
+    setAuthBusy(false);
+  }
+};
+
+useEffect(() => {
+  if (!token) {
+    setCurrentUser(null);
+    setProblems([]);
+    setLoading(false);
+    return;
+  }
+  let cancelled = false;
+  const loadAccount = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [meResponse, problemsResponse] = await Promise.all([
+        fetch(`${AUTH_API}/me`, { headers: authHeaders() }),
+        fetch(API, { headers: authHeaders() })
+      ]);
+      if (meResponse.status === 401 || meResponse.status === 403 || problemsResponse.status === 401 || problemsResponse.status === 403) {
+        logout();
+        return;
+      }
+      if (!meResponse.ok) throw new Error('Could not load your account.');
+      if (!problemsResponse.ok) throw new Error(`Could not load problems (HTTP ${problemsResponse.status}).`);
+      const me = await meResponse.json();
+      const data = await problemsResponse.json();
+      if (!cancelled) {
+        setCurrentUser(me);
+        setProblems(data.map(toFrontend));
+      }
+    } catch (err) {
+      if (!cancelled) setLoadError(err.message || 'Could not load your account and problems.');
+    } finally {
+      if (!cancelled) setLoading(false);
+    }
+  };
+  loadAccount();
+  return () => { cancelled = true; };
+}, [token]);
 
 const toFrontend = (p) => ({
   ...p,
@@ -73,33 +161,6 @@ const toBackend = (p) => ({
     Revision: 'TODO'
   })[p.status] ?? 'TODO'
 });
-
-useEffect(() => {
-  const loadProblems = async () => {
-    setLoading(true);
-    setLoadError('');
-
-    try {
-      const response = await fetch(API);
-
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
-
-      const data = await response.json();
-      setProblems(data.map(toFrontend));
-    } catch (error) {
-      console.error('Backend loading failed:', error);
-      setLoadError(
-        'Could not load problems. Make sure the backend is running and try again.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  loadProblems();
-}, []);
 
 const week = useMemo(() => {
   const today = new Date();
@@ -188,7 +249,7 @@ const submit = async (e) => {
       edit ? `${API}/${edit}` : API,
       {
         method: edit ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(toBackend(form))
       }
     );
@@ -220,7 +281,8 @@ const remove = async (id) => {
 
   try {
     const response = await fetch(`${API}/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: authHeaders()
     });
 
     if (!response.ok) throw new Error('Delete failed');
@@ -240,7 +302,7 @@ const setProblemStatus = async (id, newStatus) => {
   try {
     const response = await fetch(`${API}/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(toBackend({ ...problem, status: newStatus }))
     });
 
@@ -260,13 +322,33 @@ const setProblemStatus = async (id, newStatus) => {
 };
 
 const nav=[['Overview',LayoutDashboard],['Problem Tracker',ListChecks],['Revision Notes',BookOpen],['Analytics',BarChart3],['Weekly goals',Target]];
+const authInputStyle = { width:'100%',boxSizing:'border-box',padding:'11px 12px',border:'1px solid #dfe2ed',borderRadius:9,fontSize:14,outlineColor:'#7667f5' };
+
+if (!token) {
+  return <div style={{minHeight:'100vh',display:'grid',placeItems:'center',padding:24,background:'#f6f7fb',fontFamily:'inherit'}}>
+    <section style={{width:'100%',maxWidth:420,background:'#fff',padding:32,borderRadius:20,boxShadow:'0 18px 55px #20204012',border:'1px solid #e9eaf2'}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}><div style={{width:44,height:44,display:'grid',placeItems:'center',background:'#7667f5',color:'#fff',borderRadius:13}}><Code2 size={23}/></div><div><h1 style={{fontSize:23,margin:0,color:'#20213a'}}>CodeTrack</h1><p style={{margin:'4px 0 0',fontSize:12,color:'#9299ad'}}>YOUR PERSONAL DSA WORKSPACE</p></div></div>
+      <h2 style={{margin:'0 0 8px',fontSize:22,color:'#20213a'}}>{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h2>
+      <p style={{margin:'0 0 22px',color:'#777f96',fontSize:14}}>{authMode === 'login' ? 'Log in to continue tracking your progress.' : 'Create an account to keep your problems private.'}</p>
+      <form onSubmit={handleAuth} style={{display:'grid',gap:14}}>
+        {authMode === 'register' && <label style={{display:'grid',gap:6,fontSize:13,color:'#555d74'}}>Name<input required maxLength={100} value={authName} onChange={e=>setAuthName(e.target.value)} autoComplete="name" style={authInputStyle}/></label>}
+        <label style={{display:'grid',gap:6,fontSize:13,color:'#555d74'}}>Email<input required type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} autoComplete="email" style={authInputStyle}/></label>
+        <label style={{display:'grid',gap:6,fontSize:13,color:'#555d74'}}>Password<input required minLength={8} type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} style={authInputStyle}/></label>
+        {authError && <p role="alert" style={{margin:0,fontSize:13,color:authError.includes('created')?'#16845b':'#c43e52'}}>{authError}</p>}
+        <button type="submit" disabled={authBusy} style={{marginTop:4,padding:'12px 16px',border:0,borderRadius:10,background:'#7667f5',color:'#fff',fontWeight:700,cursor:authBusy?'wait':'pointer'}}>{authBusy ? 'Please wait…' : authMode === 'login' ? 'Log in' : 'Create account'}</button>
+      </form>
+      <p style={{textAlign:'center',fontSize:13,color:'#777f96',margin:'20px 0 0'}}>{authMode === 'login' ? "Don't have an account? " : 'Already registered? '}<button onClick={()=>{setAuthMode(authMode === 'login' ? 'register' : 'login');setAuthError('')}} style={{border:0,background:'none',color:'#6655ed',fontWeight:700,cursor:'pointer'}}>{authMode === 'login' ? 'Register' : 'Log in'}</button></p>
+    </section>
+  </div>;
+}
+
 return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><div className="brand"><div className="brand-icon"><Code2/></div><div><b>CodeTrack</b><small>DSA WORKSPACE</small></div><button className="mobile-close icon" onClick={()=>setMobile(false)}><X/></button></div><div style={{position:'relative',margin:'0 10px 20px'}}><button type="button" className="workspace" style={{width:'100%',textAlign:'left',cursor:'pointer',font:'inherit',color:'inherit',background:workspaceOpen?'#f7f6ff':'',border:workspaceOpen?'1px solid #d9d4ff':''}} onClick={()=>setWorkspaceOpen(v=>!v)} aria-expanded={workspaceOpen}><div className="workspace-mark">CT</div><div style={{flex:1}}><b>Personal workspace</b><small>Personal Workspace</small></div><ChevronDown size={15} style={{transform:workspaceOpen?'rotate(180deg)':'none',transition:'transform .15s'}}/></button>{workspaceOpen&&<div style={{position:'absolute',zIndex:30,top:'calc(100% + 6px)',left:0,right:0,background:'#fff',border:'1px solid #e5e7ef',borderRadius:12,padding:8,boxShadow:'0 12px 30px #2020401a'}}><div style={{padding:'9px 10px',fontSize:12,color:'#9299ad'}}>CURRENT WORKSPACE</div><button className="nav-item active" style={{width:'100%'}} onClick={()=>{setWorkspaceOpen(false);setPage('Overview')}}><Code2 size={17}/><span>Personal workspace</span><Check size={15}/></button><button className="nav-item" style={{width:'100%'}} onClick={()=>{setWorkspaceOpen(false);notify('This is the local demo workspace. Multi-workspace support can be added later.')}}><Plus size={17}/><span>Create workspace</span></button><button className="nav-item" style={{width:'100%'}} onClick={()=>{setWorkspaceOpen(false);setPage('Settings')}}><Settings size={17}/><span>Workspace settings</span></button></div>}</div><label className="nav-label">WORKSPACE</label>{nav.slice(0,4).map(([n,I])=><button key={n} className={'nav-item '+(page===n?'active':'')} onClick={()=>{setPage(n);setMobile(false)}}><I size={18}/><span>{n}</span>{n==='Revision Notes'&&revision>0&&<em>{revision}</em>}</button>)}<label className="nav-label personal">PERSONAL</label><button className={'nav-item '+(page==='Weekly goals'?'active':'')} onClick={()=>setPage('Weekly goals')}><Target size={18}/><span>Weekly goals</span></button><button className={'nav-item '+(page==='Settings'?'active':'')} onClick={()=>{setPage('Settings');setMobile(false)}}><Settings size={18}/><span>Settings</span></button><div className="push"/><div className="goal-card"><div className="goal-head"><span><Flame size={14}/> Weekly target</span><b>{weeklyProgress}%</b></div><div className="progress">
   <i style={{ width: `${weeklyProgress}%` }} />
-</div><p>{weeklySolved} of {weeklyGoal} problems completed</p><small>You're building a solid habit.</small></div><button type="button" className="user" style={{width:'100%',textAlign:'left',cursor:'pointer',font:'inherit',color:'inherit',background:profileOpen?'#f7f6ff':''}} onClick={()=>setProfileOpen(true)}><div className="avatar">Y</div><div style={{flex:1}}><b>Your profile</b><small>CodeTrack Profile</small></div><ChevronDown size={14}/></button></aside>{mobile&&<div className="scrim" onClick={()=>setMobile(false)}/>}<main className="main"><header className="topbar"><div className="crumb"><button className="mobile-menu icon" onClick={()=>setMobile(true)}><Menu/></button>Workspace <span>/</span> <b>{page}</b></div><div className="top-right"><div className="date-chip"><CalendarDays size={15}/>{new Date().toLocaleDateString('en-US', {
+</div><p>{weeklySolved} of {weeklyGoal} problems completed</p><small>You're building a solid habit.</small></div><button type="button" className="user" style={{width:'100%',textAlign:'left',cursor:'pointer',font:'inherit',color:'inherit',background:profileOpen?'#f7f6ff':''}} onClick={()=>setProfileOpen(true)}><div className="avatar">{(currentUser?.name || 'U').charAt(0).toUpperCase()}</div><div style={{flex:1}}><b>{currentUser?.name || 'Your profile'}</b><small>{currentUser?.email || 'CodeTrack Profile'}</small></div><ChevronDown size={14}/></button></aside>{mobile&&<div className="scrim" onClick={()=>setMobile(false)}/>}<main className="main"><header className="topbar"><div className="crumb"><button className="mobile-menu icon" onClick={()=>setMobile(true)}><Menu/></button>Workspace <span>/</span> <b>{page}</b></div><div className="top-right"><div className="date-chip"><CalendarDays size={15}/>{new Date().toLocaleDateString('en-US', {
   weekday: 'long',
   month: 'short',
   day: 'numeric'
-})}</div><button className="icon" onClick={()=>notify(`${revision} problem(s) marked for revision`)}><Bell size={18}/></button><div className="avatar top-avatar">Y</div></div></header><div className="content">
+})}</div><button className="icon" onClick={()=>notify(`${revision} problem(s) marked for revision`)}><Bell size={18}/></button><div className="avatar top-avatar">{(currentUser?.name || 'U').charAt(0).toUpperCase()}</div></div></header><div className="content">
 
 {loading && (
   <div className="empty">Loading your problems...</div>
@@ -307,6 +389,6 @@ return <div className="shell"><aside className={'sidebar '+(mobile?'open':'')}><
 </div></main>{modal&&<Modal title={edit?'Edit problem':'Add a problem'} onClose={()=>setModal(false)}><form className="form" onSubmit={submit}><label>Problem title *<input autoFocus required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="e.g. Two Sum"/></label><div className="form-row"><label>Platform<select value={form.platform} onChange={e=>setForm({...form,platform:e.target.value})}><option>LeetCode</option><option>GeeksforGeeks</option><option>Codeforces</option><option>HackerRank</option><option>Other</option></select></label><label>Topic<select value={form.topic} onChange={e=>setForm({...form,topic:e.target.value})}><option>Arrays & Hashing</option><option>Strings</option><option>Two Pointers</option><option>Sliding Window</option><option>Linked List</option><option>Stack</option><option>Queue</option><option>Binary Search</option><option>Trees</option><option>Heap</option><option>Graphs</option><option>Dynamic Programming</option><option>Greedy</option><option>Backtracking</option><option>Other</option></select></label></div><div className="form-row"><label>Difficulty<select value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})}><option>Easy</option><option>Medium</option><option>Hard</option></select></label><label>Status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option>Solved</option><option>Attempted</option><option>Revision</option></select></label></div><div className="form-row"><label>Date practiced<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Problem URL<input type="url" value={form.url} onChange={e=>setForm({...form,url:e.target.value})} placeholder="https://..."/></label></div><label>Revision notes<textarea rows="3" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="Key idea, mistake to avoid, or what to revise..."/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setModal(false)}>Cancel</button><button type="submit" className="primary" disabled={saving}>
   <Check size={16}/>
   {saving ? 'Saving...' : edit ? 'Save changes' : 'Add problem'}
-</button></div></form></Modal>}{profileOpen&&<Modal title="Your profile" onClose={()=>setProfileOpen(false)}><div style={{display:'flex',alignItems:'center',gap:14,padding:'8px 0 20px'}}><div className="avatar" style={{width:52,height:52,fontSize:20}}>Y</div><div><h3 style={{margin:'0 0 4px'}}>Local demo account</h3><p style={{margin:0,color:'#9299ad',fontSize:13}}>Personal workspace · No account connected</p></div></div><div style={{background:'#f8f8fc',borderRadius:10,padding:14,marginBottom:18}}><b style={{fontSize:13}}>Profile status</b><p style={{margin:'6px 0 0',fontSize:13,color:'#9299ad'}}>Your problem records are stored in the CodeTrack backend.</p></div><div className="form-actions"><button className="secondary" onClick={()=>{setProfileOpen(false);setPage('Settings')}}><Settings size={15}/> Settings</button><button className="primary" onClick={()=>setProfileOpen(false)}>Done</button></div></Modal>}{toast&&<div className="toast"><CheckCircle2 size={17}/>{toast}</div>}</div>
+</button></div></form></Modal>}{profileOpen&&<Modal title="Your profile" onClose={()=>setProfileOpen(false)}><div style={{display:'flex',alignItems:'center',gap:14,padding:'8px 0 20px'}}><div className="avatar" style={{width:52,height:52,fontSize:20}}>Y</div><div><h3 style={{margin:'0 0 4px'}}>{currentUser?.name || 'CodeTrack account'}</h3><p style={{margin:0,color:'#9299ad',fontSize:13}}>{currentUser?.email}</p></div></div><div style={{background:'#f8f8fc',borderRadius:10,padding:14,marginBottom:18}}><b style={{fontSize:13}}>Profile status</b><p style={{margin:'6px 0 0',fontSize:13,color:'#9299ad'}}>Your problem records are stored in the CodeTrack backend.</p></div><div className="form-actions"><button className="secondary" onClick={()=>{setProfileOpen(false);setPage('Settings')}}><Settings size={15}/> Settings</button><button className="secondary" onClick={()=>{setProfileOpen(false);logout()}}>Log out</button><button className="primary" onClick={()=>setProfileOpen(false)}>Done</button></div></Modal>}{toast&&<div className="toast"><CheckCircle2 size={17}/>{toast}</div>}</div>
 }
 function ProblemTable({problems,onEdit,onDelete,onStatus,empty='No problems yet.'}){if(!problems.length)return <div className="table-empty"><Search size={22}/><p>{empty}</p></div>;return <div className="table-wrap"><table><thead><tr><th>PROBLEM</th><th>TOPIC</th><th>DIFFICULTY</th><th>STATUS</th><th>DATE</th><th/></tr></thead><tbody>{problems.map(p=><tr key={p.id}><td><div className="problem"><span className="problem-icon"><Code2 size={15}/></span><div><b>{p.title}</b><small>{p.platform}{p.url&&<> · <a href={p.url} target="_blank" rel="noreferrer">Open problem ↗</a></>}</small></div></div></td><td><span className="topic-pill">{p.topic}</span></td><td><span className={'difficulty '+p.difficulty.toLowerCase()}>{p.difficulty}</span></td><td><select className={'status '+p.status.toLowerCase()} value={p.status} onChange={e=>onStatus(p.id,e.target.value)}><option>Solved</option><option>Attempted</option><option>Revision</option></select></td><td className="date">{p.date}</td><td><div className="row-actions"><button title="Edit" onClick={()=>onEdit(p)}><Settings size={15}/></button><button title="Delete" onClick={()=>onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>}
