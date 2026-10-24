@@ -1,0 +1,23 @@
+# Secrets and environment variables
+.env
+.env.*
+!.env.example
+**/src/main/resources/application.properties
+
+# Node.js
+node_modules/
+dist/
+npm-debug.log*
+
+# Java / Maven
+target/
+*.class
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
