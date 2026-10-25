@@ -36,6 +36,12 @@ public class ProblemRevisionController {
         return service.getDue(authentication.getName());
     }
 
+    @GetMapping("/upcoming")
+    public List<ProblemRevisionResponse> getUpcoming(
+            Authentication authentication) {
+        return service.getUpcoming(authentication.getName());
+    }
+
     @GetMapping("/history")
     public List<ProblemRevisionResponse> getHistory(
             Authentication authentication) {
