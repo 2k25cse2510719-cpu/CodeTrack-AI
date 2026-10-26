@@ -1,4 +1,3 @@
-
 package com.codetrack.config;
 
 import com.codetrack.auth.JwtAuthenticationFilter;
@@ -68,8 +67,7 @@ public class SecurityConfig {
                     .permitAll()
                 .requestMatchers("/api/v1/problems/**")
                     .authenticated()
-                .anyRequest()
-                    .authenticated()
+                .anyRequest().authenticated()
             )
             .addFilterBefore(
                 jwtAuthenticationFilter,
@@ -89,7 +87,11 @@ public class SecurityConfig {
             "http://localhost:5174",
             "http://localhost:5175",
             "http://127.0.0.1:5175",
-            "https://code-track-ai-three.vercel.app"
+            "http://localhost:5176",
+            "http://127.0.0.1:5176",
+            "https://code-track-ai-three.vercel.app",
+            "https://code-track-ai-git-feature-ml-readines-9f84e6-2k25cse2510719-cpu.vercel.app",
+            "https://code-track-ai-avynxohog-2k25cse2510719-cpu.vercel.app"
         ));
 
         configuration.setAllowedMethods(List.of(
