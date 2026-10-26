@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+models/*.joblib
+
+# Generated and raw datasets
+data/codeforces_raw/
+data/*real*
+data/*private*
+
+# Secrets
+.env
+.env.*
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
