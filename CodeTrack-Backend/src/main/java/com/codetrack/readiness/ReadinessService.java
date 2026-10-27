@@ -1,7 +1,8 @@
-
-package com.codetrack.readiness;
+﻿package com.codetrack.readiness;
 
 import com.codetrack.problem.Problem;
+import com.codetrack.problem.ProblemRevisionResponse;
+import com.codetrack.problem.ProblemRevisionService;
 import com.codetrack.problem.ProblemService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,20 +22,24 @@ import java.util.Map;
 public class ReadinessService {
 
     private final ProblemService problemService;
+    private final ProblemRevisionService revisionService;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
 
     public ReadinessService(
             ProblemService problemService,
+            ProblemRevisionService revisionService,
             ObjectMapper objectMapper,
             @Value("${app.readiness.python-url}") String pythonUrl) {
 
         this.problemService = problemService;
+        this.revisionService = revisionService;
         this.objectMapper = objectMapper;
 
         HttpClient jdkClient = HttpClient.newBuilder()
-        .version(HttpClient.Version.HTTP_1_1)
-        .build();
+                .version(HttpClient.Version.HTTP_1_1)
+                .build();
+
         JdkClientHttpRequestFactory requestFactory =
                 new JdkClientHttpRequestFactory(jdkClient);
 
@@ -62,9 +68,27 @@ public class ReadinessService {
                 })
                 .toList();
 
+        // Together these cover scheduled revisions due today or earlier,
+        // future scheduled revisions, and completed revision history.
+        List<ProblemRevisionResponse> revisions = new ArrayList<>();
+        revisions.addAll(revisionService.getDue(email));
+        revisions.addAll(revisionService.getUpcoming(email));
+        revisions.addAll(revisionService.getHistory(email));
+
+        List<Map<String, Object>> revisionData = revisions.stream()
+                .map(revision -> {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("problemId", revision.problemId());
+                    data.put("scheduledDate", revision.scheduledDate());
+                    data.put("completedAt", revision.completedAt());
+                    data.put("status", revision.status().name());
+                    return data;
+                })
+                .toList();
+
         Map<String, Object> payload = Map.of(
                 "problems", problemData,
-                "revisions", List.of()
+                "revisions", revisionData
         );
 
         JsonNode response = restClient.post()
