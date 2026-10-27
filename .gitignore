@@ -21,3 +21,20 @@ target/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Local datasets and generated artifacts
+CodeTrack-ML/data/codeforces_raw/
+CodeTrack-ML/data/codeforces/
+CodeTrack-ML/data/processed/
+CodeTrack-ML/models/
+
+# Local logs and backups
+*.log
+*.backup
+*.bak
