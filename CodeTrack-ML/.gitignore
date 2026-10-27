@@ -16,3 +16,8 @@ data/*private*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+# Experimental rating prediction artifacts — keep local
+models/future_rating_v1_leaked_backup/
+models/future_rating_v1_chronological/
+models/future_rating_v2*/
+models/future_rating_v3*/
